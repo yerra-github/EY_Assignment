@@ -1,0 +1,77 @@
+pipeline {
+    agent any
+    environment {
+        GCP_PROJECT = 'your-gcp-project-id'
+        GKE_CLUSTER = 'your-cluster-name'
+        GKE_ZONE = 'your-cluster-zone'
+        IMAGE_NAME = 'gcr.io/${GCP_PROJECT}/your-app'
+        BLUE_DEPLOYMENT = 'blue-app'
+        GREEN_DEPLOYMENT = 'green-app'
+    }
+    stages {
+        stage('Checkout Code') {
+            steps {
+                git 'https://github.com/your-repo/your-app.git'
+            }
+        }
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    docker.build("${IMAGE_NAME}:${env.BUILD_NUMBER}")
+                }
+            }
+        }
+        stage('Push Docker Image') {
+            steps {
+                script {
+                    docker.withRegistry('https://gcr.io', 'gcr:credentials-id') {
+                        docker.image("${IMAGE_NAME}:${env.BUILD_NUMBER}").push()
+                    }
+                }
+            }
+        }
+        stage('Authenticate GKE') {
+            steps {
+                script {
+                    sh """
+                    gcloud auth activate-service-account --key-file=/path/to/your-service-account.json
+                    gcloud config set project ${GCP_PROJECT}
+                    gcloud container clusters get-credentials ${GKE_CLUSTER} --zone ${GKE_ZONE}
+                    """
+                }
+            }
+        }
+        stage('Deploy to GKE - Blue/Green') {
+            steps {
+                script {
+                    // Check the active deployment
+                    def activeDeployment = sh(script: "kubectl get svc my-service -o jsonpath='{.spec.selector.app}'", returnStdout: true).trim()
+                    def targetDeployment = activeDeployment == 'blue-app' ? 'green-app' : 'blue-app'
+
+                    // Deploy to the target
+                    sh """
+                    kubectl apply -f ${targetDeployment}-deployment.yaml
+                    kubectl set image deployment/${targetDeployment} ${targetDeployment}=${IMAGE_NAME}:${env.BUILD_NUMBER}
+                    """
+
+                    // Wait for deployment to complete
+                    sh "kubectl rollout status deployment/${targetDeployment}"
+
+                    // Switch service to the new deployment
+                    sh """
+                    kubectl patch svc my-service -p '{"spec": {"selector": {"app": "${targetDeployment}"}}}'
+                    """
+                }
+            }
+        }
+    }
+    post {
+        success {
+            echo "Blue-green deployment completed successfully."
+        }
+        failure {
+            echo "Deployment failed. Please check logs."
+        }
+    }
+}
+

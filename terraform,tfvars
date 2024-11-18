@@ -1,0 +1,11 @@
+# terraform.tfvars
+
+# The project ID for Google Cloud Platform
+project_id = "your-project-id"
+
+# The region for the GKE cluster
+region     = "us-central1"
+
+# The zone for the GKE cluster
+zone       = "us-central1-a"
+
